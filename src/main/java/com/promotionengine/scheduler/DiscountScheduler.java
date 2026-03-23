@@ -3,6 +3,7 @@ package com.promotionengine.scheduler;
 import com.promotionengine.entity.Promotion;
 import com.promotionengine.entity.SystemDiscount;
 import com.promotionengine.enums.DiscountStatus;
+import com.promotionengine.enums.PromotionStatus;
 import com.promotionengine.repository.PromotionRepository;
 import com.promotionengine.repository.RuleDefinitionRepository;
 import com.promotionengine.repository.SystemDiscountRepository;
@@ -36,7 +37,7 @@ public class DiscountScheduler {
         if (!expired.isEmpty()) {
             expired.forEach(p -> {
                 p.setActive(false);
-                p.setStatus(Promotion.PromotionStatus.INACTIVE);
+                p.setStatus(PromotionStatus.INACTIVE);
                 log.info("Expiring promo: {}", p.getPromoCode());
             });
             promotionRepository.saveAll(expired);
@@ -82,12 +83,12 @@ public class DiscountScheduler {
     @Transactional
     public void activateScheduledPromotions() {
         LocalDateTime now = LocalDateTime.now();
-        List<Promotion> toActivate = promotionRepository.findByActiveFalseAndStatusAndStartDateBeforeAndEndDateAfter(Promotion.PromotionStatus.DRAFT, now, now);
+        List<Promotion> toActivate = promotionRepository.findByActiveFalseAndStatusAndStartDateBeforeAndEndDateAfter(PromotionStatus.DRAFT, now, now);
 
         if (!toActivate.isEmpty()) {
             toActivate.forEach(p -> {
                 p.setActive(true);
-                p.setStatus(Promotion.PromotionStatus.PUBLISHED);
+                p.setStatus(PromotionStatus.PUBLISHED);
                 log.info("Activating promo: {}", p.getPromoCode());
             });
             promotionRepository.saveAll(toActivate);

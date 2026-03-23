@@ -1,6 +1,7 @@
 package com.promotionengine.repository;
 
 import com.promotionengine.entity.Promotion;
+import com.promotionengine.enums.PromotionStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -17,7 +18,7 @@ public interface PromotionRepository extends JpaRepository<Promotion, Long> {
 
   // Find by status
           List<Promotion> findByStatus(
-      Promotion.PromotionStatus status);
+      PromotionStatus status);
 
   // Scheduler: find expired active promotions
           List<Promotion> findByActiveTrueAndEndDateBefore(
@@ -26,10 +27,12 @@ public interface PromotionRepository extends JpaRepository<Promotion, Long> {
   // Scheduler: find scheduled promos to activate
           List<Promotion>
   findByActiveFalseAndStatusAndStartDateBeforeAndEndDateAfter(
-      Promotion.PromotionStatus status,
+      PromotionStatus status,
       LocalDateTime start,
       LocalDateTime end);
 
   // Duplicate check
           boolean existsByPromoCode(String promoCode);
+
+    Optional<Object> findByPromoCode(String promoCode);
 }

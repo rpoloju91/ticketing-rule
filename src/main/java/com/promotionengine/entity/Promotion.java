@@ -1,11 +1,16 @@
 package com.promotionengine.entity;
 
+import com.promotionengine.enums.*;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -20,122 +25,94 @@ public class Promotion {
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
 
-  // PROMO_CODE → customer types code
-          // AUTOMATIC → system auto applies
-          @Enumerated(EnumType.STRING)
+  @Enumerated(EnumType.STRING)
   private RedemptionMethod redemptionMethod;
 
-  // OFF_PRODUCT / PERCENTAGE / FLAT
-          @Enumerated(EnumType.STRING)
+  @Enumerated(EnumType.STRING)
   private PromotionType promotionType;
 
+  @Column(unique = true)
   private String promoCode;
+
   private String displayMessage;
 
-  // Global usage limit across all customers
-          private Integer usageLimit;
-
-  // Per customer max usage
-          private Integer maxUsagePerCustomer;
-
-  // PERCENTAGE or FLAT
-          @Enumerated(EnumType.STRING)
+  @Enumerated(EnumType.STRING)
   private DiscountType discountType;
+
   private Double amount;
 
-  // Admin decides stackable per promotion
-          // true → can combine with other stackable promos
-          // false → exclusive, cannot combine with any other promo
-          private Boolean stackable;
+  private Boolean stackable;
 
-  // 1=Highest priority, 5=Lowest priority (slider in UI)
-          private Integer priority;
+  private Integer priority;
 
-  // true → apply on full cart total
-          // false → apply on category/ticket level
-          private Boolean applyFullCart;
+  // ✅ When true → ticket tables will be EMPTY (correct)
+  // When false → ticket tables should have data
+  private Boolean applyFullCart;
 
-  // Used when applyFullCart = false
-          private String category;
+  private String category;
   private String ticketType;
 
-  @ElementCollection
-  @CollectionTable(
-    name = "promotion_ticket_titles",
-                joinColumns = @JoinColumn(name = "promotion_id"))
-              @Column(name = "ticket_title")
-  private List<String> ticketTitles;
+  // ✅ FIX: @ElementCollection with proper
+  // @CollectionTable and column definitions
+  // MUST have cascade on parent entity save
 
   @ElementCollection
   @CollectionTable(
-    name = "promotion_ticket_quantities",
-                joinColumns = @JoinColumn(name = "promotion_id"))
-              @MapKeyColumn(name = "ticket_title")
+          name = "promotion_ticket_titles",
+          joinColumns = @JoinColumn(name = "promotion_id")
+  )
+  @Column(name = "ticket_title")
+  // ✅ Initialize to empty list — never null
+  private List<String> ticketTitles = new ArrayList<>();
+
+  @ElementCollection
+  @CollectionTable(
+          name = "promotion_ticket_quantities",
+          joinColumns = @JoinColumn(name = "promotion_id")
+  )
+  @MapKeyColumn(name = "ticket_title")
   @Column(name = "quantity")
-  private Map<String, Integer> ticketQuantities;
+  // ✅ Initialize to empty map — never null
+  private Map<String, Integer> ticketQuantities
+          = new HashMap<>();
 
   @ElementCollection
   @CollectionTable(
-    name = "promotion_ticket_apply_all",
-                joinColumns = @JoinColumn(name = "promotion_id"))
-              @MapKeyColumn(name = "ticket_title")
+          name = "promotion_ticket_apply_all",
+          joinColumns = @JoinColumn(name = "promotion_id")
+  )
+  @MapKeyColumn(name = "ticket_title")
   @Column(name = "apply_all")
-  private Map<String, Boolean> applyAllPerTicketTitle;
+  // ✅ Initialize to empty map — never null
+  private Map<String, Boolean> applyAllPerTicketTitle
+          = new HashMap<>();
 
-  // DATE DRIVEN
-          private LocalDateTime startDate;
+  private LocalDateTime startDate;
   private LocalDateTime endDate;
 
-  // Sales & distribution channels
-          private Boolean channelWeb;
+  private Boolean channelWeb;
   private Boolean channelPos;
 
-  // ALL_USERS / NON_MEMBERS / MEMBERS
-          @Enumerated(EnumType.STRING)
+  @Enumerated(EnumType.STRING)
   private UserType userType;
 
-  // DRAFT / PUBLISHED / INACTIVE
-          @Enumerated(EnumType.STRING)
+  private Integer usageLimit;
+  private Integer maxUsagePerCustomer;
+
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
   private PromotionStatus status;
 
   private Boolean active = false;
 
-  private LocalDateTime createdAt;
-  private LocalDateTime updatedAt;
   private String createdBy;
   private String updatedBy;
 
-  @PrePersist
-  public void prePersist() {
-    createdAt = LocalDateTime.now();
-    updatedAt = LocalDateTime.now();
-    if (status == null) status = PromotionStatus.DRAFT;
-    if (active == null) active = false;
-    if (stackable == null) stackable = true;
-  }
+  @CreationTimestamp
+  private LocalDateTime createdAt;
 
-  @PreUpdate
-  public void preUpdate() {
-    updatedAt = LocalDateTime.now();
-  }
+  @UpdateTimestamp
+  private LocalDateTime updatedAt;
 
-  public enum RedemptionMethod {
-    PROMO_CODE, AUTOMATIC
-  }
 
-  public enum PromotionType {
-    OFF_PRODUCT, PERCENTAGE, FLAT
-  }
-
-  public enum DiscountType {
-    PERCENTAGE, FLAT
-  }
-
-  public enum UserType {
-    ALL_USERS, NON_MEMBERS, MEMBERS
-  }
-
-  public enum PromotionStatus {
-    DRAFT, PUBLISHED, INACTIVE
-  }
 }

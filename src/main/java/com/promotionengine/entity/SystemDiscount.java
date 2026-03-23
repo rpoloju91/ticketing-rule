@@ -17,76 +17,74 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class SystemDiscount {
 
-  @Id
-  @GeneratedValue(strategy = GenerationType.IDENTITY)
-  private Long id;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
-  // Internal name
-          private String title;
+    // Internal name
+    private String title;
 
-  // Shown on POS and checkout
-          private String displayName;
+    // Shown on POS and checkout
+    private String displayName;
 
-  private String description;
+    private String description;
 
-  // PERCENTAGE or FLAT
-          @Enumerated(EnumType.STRING)
-  private DiscountType discountType;
+    // PERCENTAGE or FLAT
+    @Enumerated(EnumType.STRING)
+    private DiscountType discountType;
 
-  private Double amount;
+    private Double amount;
 
-  // Icon chosen from UI
-          private String icon;
+    // Icon chosen from UI
+    private String icon;
 
-  // DATE DRIVEN
-          private LocalDateTime startDate;
-  private LocalDateTime endDate;
+    // DATE DRIVEN
+    private LocalDateTime startDate;
+    private LocalDateTime endDate;
 
-  // Manager approval required toggle
-          private Boolean managerApprovalRequired;
+    // Manager approval required toggle
+    private Boolean managerApprovalRequired;
 
-  // true → can stack with other system discounts
-          // false → exclusive, blocks all other system discounts
-          private Boolean stackable;
+    // true → can stack with other system discounts
+    // false → exclusive, blocks all other system discounts
+    private Boolean stackable;
 
-  // ALL_USERS / NON_MEMBERS / MEMBERS
-          @Enumerated(EnumType.STRING)
-  private UserType userType;
+    // ALL_USERS / NON_MEMBERS / MEMBERS
+    @Enumerated(EnumType.STRING)
+    private UserType userType;
 
-  // DRAFT / PUBLISHED / INACTIVE
-          @Enumerated(EnumType.STRING)
-  private DiscountStatus status;
+    // DRAFT / PUBLISHED / INACTIVE
+    @Enumerated(EnumType.STRING)
+    private DiscountStatus status;
 
-  // Only PUBLISHED and active discounts generate DRL rules
-          private Boolean active = false;
+    // Only PUBLISHED and active discounts generate DRL rules
+    private Boolean active = false;
 
-  // Used as Drools salience
-          private Integer priority;
+    // Used as Drools salience
+    private Integer priority;
 
-  // Mutual exclusion group for system discounts
-          private String stackGroup;
+    // Mutual exclusion group for system discounts
+    private String stackGroup;
 
-  private LocalDateTime createdAt;
-  private LocalDateTime updatedAt;
-  private String createdBy;
-  private String updatedBy;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private String createdBy;
+    private String updatedBy;
 
-  @PrePersist
-  public void prePersist() {
-    createdAt = LocalDateTime.now();
-    updatedAt = LocalDateTime.now();
-    if (status == null) status = DiscountStatus.DRAFT;
-    if (active == null) active = false;
-    if (stackable == null) stackable = true;
-    if (managerApprovalRequired == null)
-      managerApprovalRequired = false;
-  }
+    @PrePersist
+    public void prePersist() {
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
+        if (status == null) status = DiscountStatus.DRAFT;
+        if (active == null) active = false;
+        if (stackable == null) stackable = true;
+        if (managerApprovalRequired == null) managerApprovalRequired = false;
+    }
 
-  @PreUpdate
-  public void preUpdate() {
-    updatedAt = LocalDateTime.now();
-  }
-
+    @PreUpdate
+    public void preUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
 
 
 }

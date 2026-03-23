@@ -2,6 +2,7 @@ package com.promotionengine.service;
 
 import com.promotionengine.entity.*;
 import com.promotionengine.enums.DiscountType;
+import com.promotionengine.enums.RedemptionMethod;
 import com.promotionengine.enums.UserType;
 import com.promotionengine.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -45,7 +46,7 @@ public class DroolsRuleService {
 
         if (!isNew) saveHistory(rule, "UPDATED", changedBy);
 
-        String ruleName = p.getRedemptionMethod() == Promotion.RedemptionMethod.AUTOMATIC ? "PROMO_AUTO_" + p.getId() : "PROMO_" + p.getPromoCode();
+        String ruleName = p.getRedemptionMethod() == RedemptionMethod.AUTOMATIC ? "PROMO_AUTO_" + p.getId() : "PROMO_" + p.getPromoCode();
 
         rule.setRuleName(ruleName);
         rule.setRuleType("PROMOTION");
@@ -151,7 +152,7 @@ public class DroolsRuleService {
     private String buildPromotionDRL(Promotion p) {
         StringBuilder drl = new StringBuilder();
 
-        String ruleName = p.getRedemptionMethod() == Promotion.RedemptionMethod.AUTOMATIC ? "PROMO_AUTO_" + p.getId() : "PROMO_" + p.getPromoCode();
+        String ruleName = p.getRedemptionMethod() == RedemptionMethod.AUTOMATIC ? "PROMO_AUTO_" + p.getId() : "PROMO_" + p.getPromoCode();
 
         drl.append("package com.promotionengine.rules;\n\n");
         drl.append("import com.promotionengine.dto.Cart;\n");
@@ -171,7 +172,7 @@ public class DroolsRuleService {
         // Cart conditions
         drl.append("        $cart : Cart(\n");
 
-        if (p.getRedemptionMethod() == Promotion.RedemptionMethod.PROMO_CODE) {
+        if (p.getRedemptionMethod() == RedemptionMethod.PROMO_CODE) {
             drl.append("            hasPromoCode(\"").append(p.getPromoCode()).append("\") == true");
         } else {
             drl.append("            cartTotal > 0");
@@ -186,8 +187,8 @@ public class DroolsRuleService {
         }
 
         // User type
-        if (p.getUserType() != null && p.getUserType() != Promotion.UserType.ALL_USERS) {
-            String ut = p.getUserType() == Promotion.UserType.MEMBERS ? "MEMBER" : "NON_MEMBER";
+        if (p.getUserType() != null && p.getUserType() != UserType.ALL_USERS) {
+            String ut = p.getUserType() == UserType.MEMBERS ? "MEMBER" : "NON_MEMBER";
             drl.append(",\n").append("            userType != null,\n").append("            userType == \"").append(ut).append("\"");
         }
 
@@ -293,7 +294,7 @@ public class DroolsRuleService {
     //  DISCOUNT HELPERS
     // ════════════════════════════════════════
     private void appendFullCartDiscount(StringBuilder drl, Promotion p, String ruleName) {
-        if (p.getDiscountType() == Promotion.DiscountType.PERCENTAGE) {
+        if (p.getDiscountType() == DiscountType.PERCENTAGE) {
             drl.append("        double discount = " + "$cart.getCartTotal() * ").append(p.getAmount()).append(" / 100.0;\n");
         } else {
             drl.append("        double discount = Math.min(").append(p.getAmount()).append(", $cart.getCartTotal());\n");
@@ -303,7 +304,7 @@ public class DroolsRuleService {
 
     private void appendCategoryDiscount(StringBuilder drl, Promotion p, String ruleName) {
         drl.append("        double baseAmount = " + "$cart.getCategoryTotal(\"").append(p.getCategory()).append("\");\n");
-        if (p.getDiscountType() == Promotion.DiscountType.PERCENTAGE) {
+        if (p.getDiscountType() == DiscountType.PERCENTAGE) {
             drl.append("        double discount = baseAmount * ").append(p.getAmount()).append(" / 100.0;\n");
         } else {
             drl.append("        double discount = Math.min(").append(p.getAmount()).append(", baseAmount);\n");
@@ -333,7 +334,7 @@ public class DroolsRuleService {
                 drl.append("        double base_").append(safeTitle).append(" = 0.0;\n");
             }
 
-            if (p.getDiscountType() == Promotion.DiscountType.PERCENTAGE) {
+            if (p.getDiscountType() == DiscountType.PERCENTAGE) {
                 drl.append("        totalDiscount += base_").append(safeTitle).append(" * ").append(p.getAmount()).append(" / 100.0;\n");
             } else {
                 drl.append("        totalDiscount += base_").append(safeTitle).append(" > 0 ? ").append(p.getAmount()).append(" : 0.0;\n");

@@ -1,6 +1,8 @@
 package com.promotionengine.controller;
 
+import com.promotionengine.dto.PromotionRequest;
 import com.promotionengine.entity.Promotion;
+import com.promotionengine.enums.PromotionStatus;
 import com.promotionengine.service.PromotionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -18,7 +20,7 @@ public class PromotionController {
   // Create — status in body decides DRAFT or PUBLISH
           @PostMapping
   public ResponseEntity<Promotion> create(
-      @RequestBody Promotion promotion,
+      @RequestBody PromotionRequest promotion,
       @RequestParam(defaultValue = "ADMIN")
         String createdBy) {
     return ResponseEntity.ok(
@@ -30,7 +32,7 @@ public class PromotionController {
           @PutMapping("/{id}")
   public ResponseEntity<Promotion> update(
       @PathVariable Long id,
-      @RequestBody Promotion promotion,
+      @RequestBody PromotionRequest promotion,
       @RequestParam(defaultValue = "ADMIN")
         String updatedBy) {
     return ResponseEntity.ok(
@@ -49,7 +51,7 @@ public class PromotionController {
           @GetMapping("/status/{status}")
   public ResponseEntity<List<Promotion>> getByStatus(
       @PathVariable
-        Promotion.PromotionStatus status) {
+      PromotionStatus status) {
     return ResponseEntity.ok(
                       promotionService.getByStatus(status));
   }
