@@ -64,3 +64,11 @@ curl -X POST http://localhost:8080/api/engine/apply \
       }
     ]
   }'
+
+  INSERT INTO engine_config
+    (config_key, config_value, description,
+     created_at, updated_at)
+VALUES
+    ('MAX_PROMOS_PER_CART', '2',
+     'Maximum number of promo codes customer can select per cart',
+     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
