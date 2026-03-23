@@ -23,8 +23,7 @@ curl -X POST "http://localhost:8080/api/promotions?createdBy=ADMIN" \
     "userType"           : "ALL_USERS",
     "status"             : "PUBLISHED"
   }'
-  
-  ------------------------
+ 
   curl -X POST "http://localhost:8080/api/system-discounts?createdBy=ADMIN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -42,10 +41,10 @@ curl -X POST "http://localhost:8080/api/promotions?createdBy=ADMIN" \
     "priority"               : 80,
     "status"                 : "PUBLISHED"
   }'
-  ----------------------------------
+
   curl http://localhost:8080/api/engine/rules
 # Should return PROMO_SAVE10 and SYSDISCOUNT_LOYALTY_REWARD
----------------------------------------------
+
 curl -X POST http://localhost:8080/api/engine/apply \
   -H "Content-Type: application/json" \
   -d '{
