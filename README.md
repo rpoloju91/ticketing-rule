@@ -1,6 +1,45 @@
 # ticketing-rule
 Drools + Springboot + JPA
 
+with fullcart false:
+
+{
+    "redemptionMethod": "PROMO_CODE",
+    "promotionType": "PERCENTAGE",
+    "promoCode": "MUSEUM20",
+    "displayMessage": "20% off Museum tickets!",
+    "discountType": "PERCENTAGE",
+    "amount": 20.0,
+    "stackable": true,
+    "priority": 3,
+    "applyFullCart": false,
+    "category": "Museum Admission",
+    "ticketType": "General Admission",
+    "ticketTitles": [
+        "Adult",
+        "Youth",
+        "Child"
+    ],
+    "ticketQuantities": {
+        "Adult": 2,
+        "Youth": 0,
+        "Child": 0
+    },
+    "applyAllPerTicketTitle": {
+        "Adult": false,
+        "Youth": true,
+        "Child": false
+    },
+    "startDate": "2026-01-01T00:00:00",
+    "endDate": "2026-12-31T23:59:59",
+    "channelWeb": true,
+    "channelPos": true,
+    "userType": "ALL_USERS",
+    "usageLimit": 100,
+    "maxUsagePerCustomer": 2,
+    "status": "PUBLISHED"
+}
+
 
 curl -X POST "http://localhost:8080/api/promotions?createdBy=ADMIN" \
   -H "Content-Type: application/json" \
