@@ -1,0 +1,1176 @@
+# 🎯 Promotion Engine — Complete Technical Document
+
+**Project**: ticketing-drools 
+**Stack**: Spring Boot 4.0.1 · Java 17 · Drools 8.44 · H2/MySQL · Jackson 3.x 
+**Purpose**: A rule-based dynamic promotion and discount engine for ticketing systems
+
+---
+
+## 📋 Table of Contents
+
+1. [System Overview](#1-system-overview)
+2. [Architecture](#2-architecture)
+3. [Technology Stack & Why](#3-technology-stack--why)
+4. [Database Design](#4-database-design)
+5. [Entity Layer](#5-entity-layer)
+6. [Repository Layer](#6-repository-layer)
+7. [Service Layer](#7-service-layer)
+8. [Drools Rule Engine](#8-drools-rule-engine)
+9. [REST API Layer](#9-rest-api-layer)
+10. [Promotion Features](#10-promotion-features)
+11. [System Discount Features](#11-system-discount-features)
+12. [Rule Engine Apply Flow](#12-rule-engine-apply-flow)
+13. [Configuration Engine](#13-configuration-engine)
+14. [Rule Versioning & Rollback](#14-rule-versioning--rollback)
+15. [Audit Logging](#15-audit-logging)
+16. [Error Handling](#16-error-handling)
+17. [Performance Optimizations](#17-performance-optimizations)
+18. [Known Issues Fixed](#18-known-issues-fixed)
+19. [Request & Response Reference](#19-request--response-reference)
+
+---
+
+## 1. System Overview
+
+### What is this system?
+
+The Promotion Engine is a **dynamic, rule-based discount calculation system** built for a ticketing platform. It allows administrators to create and manage promotions and system discounts that are automatically compiled into **Drools Rule Language (DRL)** files and executed at cart checkout time.
+
+### Core Problems It Solves
+
+```
+Without this system:
+─────────────────────────────────────────────────────────
+  Discount logic is hardcoded in application code
+  Changing a discount requires code change + deployment
+  No audit trail of what discount was applied and why
+  No way to stack or combine multiple discounts safely
+  No rule versioning or rollback capability
+
+With this system:
+──────────────────────────────────────────────────────���──
+  Admin creates promotions via REST API → auto-compiled to DRL
+  Discount rules change without any deployment
+  Full audit log of every apply request
+  Stackable/non-stackable rules enforced automatically
+  Every rule change versioned and rollback supported
+```
+
+### Two Types of Discounts
+
+```
+┌──────────────────────┬─────────���────────────────────────────────┐
+│ PROMOTION            │ SYSTEM DISCOUNT                          │
+├──────────────────────┼──────────────────────────────────────────┤
+│ Admin creates        │ Admin creates                            │
+│ Customer applies via │ Applied AUTOMATICALLY by system          │
+│ promo code           │ No customer action needed                │
+│ e.g. SAVE10, MUSEUM20│ e.g. Loyalty Reward, Seasonal Sale       │
+│ Stackable = configurable│ Stackable = configurable             │
+│ Has usage limits     │ Can require manager approval             │
+│ Has per-customer     │ Can have stack groups                    │
+│ usage limits         │ (only 1 per group can apply)             │
+└──────────────────────┴──────────────────────────────────────────┘
+```
+
+---
+
+## 2. Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                         LAYERED ARCHITECTURE                          │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  ┌─────────┐   ┌──────────┐   ┌───────────┐                          │
+│  │  ADMIN  │   │ CUSTOMER │   │ SCHEDULER │                          │
+│  └────┬────┘   └────┬─────┘   └─────┬─────┘                          │
+│       │              │               │                                 │
+│       ▼              ▼               ▼                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                    CONTROLLER LAYER                             │  │
+│  │  PromotionController  SystemDiscountController  RuleEngine      │  │
+│  │  EngineConfigController                         Controller      │  │
+│  └───────────────────────────┬─────────────────────────────────────┘  │
+│                              │                                         │
+│  ┌───────────────────────────▼─────────────────────────────────────┐  │
+│  │                     SERVICE LAYER                               │  │
+│  │  PromotionService   SystemDiscountService   EngineConfigService │  │
+│  │  DroolsRuleService  DroolsEngineService                         │  │
+│  └───────────────────────────┬─────────────────────────────────────┘  │
+│                              │                                         │
+│          ┌───────────────────┴───────────────────┐                    │
+│          ▼                                       ▼                    │
+│  ┌��──────────────────┐             ┌─────────────────────────────┐    │
+│  │  REPOSITORY LAYER │             │   DROOLS ENGINE (JVM)       │    │
+│  │  JPA Repositories │             │   KieContainer (singleton)  │    │
+│  └─────────┬─────────┘             │   KieSession (per request)  │    │
+│            │                       └─────────────────────────────┘    │
+│            ▼                                                           │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │                    DATABASE LAYER (H2/MySQL)                    │  │
+│  │  promotion  system_discount  rule_definitions  rule_history     │  │
+│  │  promo_usage  discount_audit_log  engine_config                 │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Technology Stack & Why
+
+### Spring Boot 4.0.1
+
+```
+WHY:
+  Latest Spring Boot with Spring Framework 7.x
+  Jakarta EE 11 namespace (jakarta.* not javax.*)
+  Better performance with virtual threads
+  Native compilation support
+  Spring MVC + Spring Data JPA out of the box
+```
+
+### Drools 8.44.0.Final
+
+```
+WHY:
+  Rule-based engine — discount logic lives in DRL files
+  DRL files compiled at runtime from DB — no redeployment
+  Salience (priority) controls rule execution order
+  no-loop prevents same rule firing twice in one session
+  KieContainer holds compiled rules (singleton, thread-safe)
+  KieSession executes rules (new per request, disposed after)
+
+KEY CONCEPTS:
+  KieServices    → factory to build everything Drools needs
+  KieFileSystem  → in-memory file system to hold DRL content
+  KieBuilder     → compiles DRL into bytecode
+  KieContainer   → holds compiled KieBase (reloaded on change)
+  KieSession     → stateful working memory per cart request
+  insert()       → puts Cart and DiscountResult into session
+  fireAllRules() → executes all matching rules
+  dispose()      → releases session memory (MUST be called)
+```
+
+### Jackson 3.x (tools.jackson)
+
+```
+WHY Spring Boot 4.x uses Jackson 3.x:
+  New package: tools.jackson (not com.fasterxml.jackson)
+  JavaTimeModule is BUILT INTO jackson-databind 3.x
+  No separate dependency needed
+  Builder pattern replaces direct mapper.configure()
+
+CRITICAL CHANGES from Jackson 2.x to 3.x:
+  ObjectMapper    → tools.jackson.databind.ObjectMapper
+  JsonMapper      → tools.jackson.databind.json.JsonMapper
+  DateTimeFeature → tools.jackson.databind.cfg.DateTimeFeature
+  Configuration   → JsonMapper.builder().configure(...).build()
+```
+
+### H2 (Development) / MySQL (Production)
+
+```
+WHY H2 for dev:
+  In-memory database — no setup required
+  Auto schema creation from JPA entities
+  H2 console at /h2-console for debugging
+
+WHY MySQL for prod:
+  Persistent storage
+  Production-grade performance
+  Switch via application-prod.properties
+```
+
+---
+
+## 4. Database Design
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     TABLE OVERVIEW                              │
+├──────────────────────────────┬──────────────────────────────────┤
+│ Table                        │ Purpose                          │
+├──────────────────────────────┼──────────────────────────────────┤
+│ promotion                    │ Promo code based discounts       │
+│ promotion_ticket_titles      │ @ElementCollection — ticket names│
+│ promotion_ticket_quantities  │ @ElementCollection — qty per title│
+│ promotion_ticket_apply_all   │ @ElementCollection — apply all   │
+│ system_discount              │ Auto-applied discounts           │
+│ rule_definitions             │ DRL content stored in DB         │
+│ rule_history                 │ Every version of every rule      │
+│ promo_usage                  │ Usage count per customer         │
+│ discount_audit_log           │ Full log of every apply call     │
+│ engine_config                │ Key-value config (max promos etc)│
+└──────────────────────────────┴──────────────────────────────────┘
+```
+
+### Why `@ElementCollection` for ticket tables?
+
+```
+Promotions can apply to specific ticket titles with:
+  - Different quantities per title
+  - "Apply to ALL tickets of this title" flag
+
+These are variable-length key-value structures
+→ Cannot be stored in single columns
+→ JPA @ElementCollection creates separate child tables
+→ Automatically managed by Hibernate (insert/delete with parent)
+
+promotion_ticket_titles:
+  promotion_id | ticket_title
+  1            | Adult
+  1            | Youth
+  1            | Child
+
+promotion_ticket_quantities:
+  promotion_id | ticket_title | quantity
+  1            | Adult        | 2
+  1            | Youth        | 0
+  1            | Child        | 0
+
+promotion_ticket_apply_all:
+  promotion_id | ticket_title | apply_all
+  1            | Adult        | false
+  1            | Youth        | true
+  1            | Child        | false
+
+IMPORTANT: These tables only populate when applyFullCart = false
+           When applyFullCart = true → full cart discount, no ticket logic
+```
+
+---
+
+## 5. Entity Layer
+
+### Promotion Entity
+
+```
+Fields:
+  redemptionMethod  → PROMO_CODE or AUTOMATIC
+                      PROMO_CODE: customer enters code
+                      AUTOMATIC:  system applies without code
+
+  promotionType     → PERCENTAGE or FLAT
+  discountType      → PERCENTAGE or FLAT (discount calculation type)
+  promoCode         → unique code e.g. "SAVE10"
+  displayMessage    → shown to customer "10% off your cart!"
+  amount            → discount value (10 for 10%, 30 for $30)
+  stackable         → can this combine with other promos?
+  priority          → 1 (highest) to 5 (lowest)
+                      converted to Drools salience:
+                      1→100, 2→80, 3→60, 4→40, 5→20
+  applyFullCart     → true: discount on whole cart total
+                      false: ticket-level or category discount
+  category          → apply discount to this category only
+  ticketType        → General Admission, VIP etc.
+  ticketTitles      → which ticket titles get discounted
+  ticketQuantities  → how many of each title to discount
+  applyAllPerTitle  → true: discount ALL tickets of that title
+  startDate/endDate → validity window
+  channelWeb/Pos    → which channels this promo is valid for
+  userType          → ALL_USERS, MEMBERS, NON_MEMBERS
+  usageLimit        → total redemptions allowed globally
+  maxUsagePerCust   → max times one customer can use it
+  status            → DRAFT, PUBLISHED, INACTIVE
+  active            → true only when status = PUBLISHED
+```
+
+### SystemDiscount Entity
+
+```
+Fields:
+  title             → unique key e.g. "LOYALTY_REWARD"
+  displayName       → shown to customer "Loyalty Reward"
+  description       → "5% off for all members"
+  icon              → icon reference for UI
+  discountType      → PERCENTAGE or FLAT
+  amount            → discount value
+  managerApproval   → true: response has managerApprovalRequired=true
+                           POS operator must get manager to approve
+  stackable         → can combine with other system discounts?
+  stackGroup        → only 1 discount per group fires
+                      e.g. "EXCLUSIVE_SALE_GROUP"
+  userType          → ALL_USERS, MEMBERS, NON_MEMBERS
+  priority          → Drools salience directly (80, 90 etc.)
+  status/active     → same as Promotion
+```
+
+### RuleDefinition Entity
+
+```
+WHY this table exists:
+  DRL (Drools Rule Language) content is stored in DB
+  On app startup → loaded from DB → compiled into KieContainer
+  On promotion publish → new DRL generated → saved → KieContainer reloaded
+  This means rules can change WITHOUT restarting the application
+
+Fields:
+  ruleName    → unique e.g. "PROMO_SAVE10", "SYSDISCOUNT_LOYALTY_REWARD"
+  ruleType    → "PROMOTION" or "SYSTEM_DISCOUNT"
+  referenceId → FK to promotion.id or system_discount.id
+  drlContent  → full DRL text stored as CLOB/TEXT
+  version     → increments on every change
+  active      → false = rule excluded from KieContainer
+  createdBy   → who created/last updated
+```
+
+### RuleHistory Entity
+
+```
+WHY this table exists:
+  Every time a rule changes, old version saved here
+  Enables rollback to any previous version
+  Full audit trail of DRL content changes
+
+Fields:
+  ruleName    → which rule
+  version     → which version
+  drlContent  → exact DRL at that version
+  action      → CREATED, UPDATED, DEACTIVATED, ROLLBACK_TO_V1 etc.
+  changedBy   → who made the change
+  changedAt   → when
+```
+
+---
+
+## 6. Repository Layer
+
+### Key Custom Queries
+
+```java
+// PromotionRepository
+findByPromoCodeAndActiveTrue(String)
+  → Used in apply validation — checks promo is active
+
+findByPromoCodeInAndActiveTrue(List<String>)
+  → BATCH query — fetch ALL promos in ONE DB call
+  → Performance: 1 query instead of N queries
+
+// PromoUsageRepository
+findByPromoCodeInAndCustomerId(List<String>, String)
+  → Fetch all usage records for customer in ONE query
+
+getTotalUsageByPromoCodeIn(List<String>)
+  → GROUP BY query — get global usage for all promos at once
+
+incrementUsage(String promoCode, String customerId)
+  → UPDATE query — atomic increment
+  → Returns 0 if no row exists → service then does INSERT
+
+// RuleDefinitionRepository
+findByActiveTrue()
+  → Load ALL active rules on startup and reload
+
+findByRuleTypeAndReferenceIdAndActiveTrue(String, Long)
+  → Used when updating a promo — find existing rule
+
+findByRuleNameAndActiveTrue(String)
+  → Used in rollback — find current active rule
+
+// RuleHistoryRepository
+findByRuleNameAndVersion(String, Integer)
+  → Used in rollback — find specific version to restore
+```
+
+---
+
+## 7. Service Layer
+
+### PromotionService
+
+```
+Responsibilities:
+  createPromotion()  → validate unique code → save → generate DRL if PUBLISHED
+  updatePromotion()  → clear old ticket collections → update → regenerate DRL
+  getAll()           → list all promotions
+  getById()          → get single promotion
+  getByStatus()      → filter by DRAFT/PUBLISHED/INACTIVE
+
+Key Logic:
+  active = true  ONLY when status = PUBLISHED
+  active = false when DRAFT or INACTIVE
+  DRL generated ONLY when PUBLISHED
+  DRL deactivated when INACTIVE
+  Ticket collection fields ONLY populated when applyFullCart = false
+```
+
+### SystemDiscountService
+
+```
+Responsibilities:
+  Same CRUD pattern as PromotionService
+  generate/deactivate SystemDiscount DRL rules
+
+Key Difference from Promotion:
+  No promo code — applied automatically by Drools
+  Has managerApprovalRequired flag
+  Has stackGroup — prevents multiple exclusive discounts
+```
+
+### DroolsRuleService
+
+```
+Responsibilities:
+  generatePromotionRule()      → builds DRL from Promotion entity → saves to DB
+  generateSystemDiscountRule() → builds DRL from SystemDiscount entity → saves to DB
+  deactivateRule()             → marks rule inactive → triggers reload
+  rollbackRule()               → copies old DRL version to current → triggers reload
+  buildPromotionDRL()          → DRL generation logic for promotions
+  buildSystemDiscountDRL()     → DRL generation logic for system discounts
+
+Why DRL is Generated Dynamically:
+  Every promotion has different conditions (dates, user type, channel, tickets)
+  Hardcoding these would require redeployment per change
+  Dynamic DRL = zero-deployment rule changes
+
+Circular Dependency Solution:
+  DroolsRuleService needs DroolsEngineService (for reloadRules)
+  DroolsEngineService needs DroolsRuleService (for rule content)
+  SOLVED by: ApplicationContext.getBean() lazy lookup
+  DroolsRuleService does NOT inject DroolsEngineService directly
+  It calls applicationContext.getBean(DroolsEngineService.class)
+  only when reloadRules() needs to be called
+```
+
+### DroolsEngineService
+
+```
+Responsibilities:
+  init()              → @PostConstruct — load rules from DB on startup
+  reloadRules()       → rebuild KieContainer from DB rule_definitions
+  buildEmptyContainer()→ empty KieContainer when no rules exist yet
+  applyRules()        → main entry point for /api/engine/apply
+  validatePromoCodes()→ batch validate all promo codes
+  validateDateAndUsage()→ date window + usage limit checks
+  fireRules()         → create KieSession → insert facts → fireAllRules
+  incrementUsage()    → increment promo usage count in DB
+  saveAuditLogAsync() → @Async audit log save
+
+KieContainer Lifecycle:
+  Created:  on startup + on every rule change
+  Held:     as AtomicReference<KieContainer> (thread-safe)
+  Reloaded: on every promotion/discount publish or update
+  Old one:  disposed safely after waiting for active sessions
+  WHY AtomicReference: allows swap without locking read path
+
+KieSession Lifecycle:
+  Created:  new KieSession per apply request (from KieContainer)
+  Used:     insert Cart + insert DiscountResult → fireAllRules()
+  Disposed: ALWAYS in finally block — memory leak if not disposed
+  WHY new per request: KieSession is stateful — cannot be shared
+```
+
+---
+
+## 8. Drools Rule Engine
+
+### How DRL is Generated
+
+```
+Promotion with these settings:
+  promoCode    = "MUSEUM20"
+  discountType = PERCENTAGE
+  amount       = 20
+  applyFullCart= false
+  ticketTitles = [Adult, Youth]
+  ticketQty    = {Adult:2, Youth:0}
+  applyAll     = {Adult:false, Youth:true}
+  stackable    = true
+  priority     = 3 → salience 60
+
+Generates this DRL:
+─────────────���─────────────────────────────────────
+rule "PROMO_MUSEUM20"
+    salience 60
+    no-loop true
+    when
+        $result : DiscountResult(
+            promoStackLocked == false,
+            isRuleAlreadyFired("PROMO_MUSEUM20") == false
+        )
+        $cart : Cart(
+            hasPromoCode("MUSEUM20") == true,
+            currentDateTime >= LocalDateTime.of(2026,1,1,0,0,0),
+            currentDateTime <= LocalDateTime.of(2026,12,31,23,59,59)
+        )
+    then
+        double totalDiscount = 0.0;
+        // Adult: qty=2
+        double base_Adult = $cart.getTicketTitleTotalForQty("Adult", 2);
+        totalDiscount += base_Adult * 20.0 / 100.0;
+        // Youth: applyAll=true
+        double base_Youth = $cart.getTicketTitleTotal("Youth");
+        totalDiscount += base_Youth * 20.0 / 100.0;
+        $result.addPromoDiscount("PROMO_MUSEUM20",
+            "20% off Museum tickets!", totalDiscount);
+        update($result);
+end
+───────────────────────────────────────────────────
+```
+
+### Why `no-loop true`
+
+```
+Without no-loop:
+  THEN block calls update($result)
+  update() tells Drools: "DiscountResult changed"
+  Drools re-evaluates ALL rules including this one
+  If WHEN still matches → rule fires again → infinite loop → OOM
+
+With no-loop true:
+  Rule will not re-activate itself due to its own update()
+  Prevents same rule firing twice in same session
+```
+
+### Why `isRuleAlreadyFired()` check
+
+```
+no-loop prevents self-re-activation
+BUT another rule's update() can still re-activate this rule
+
+Solution: track fired rules in DiscountResult.firedRuleNames Set
+isRuleAlreadyFired("PROMO_MUSEUM20") == false in WHEN block
+→ Once rule fires → firedRuleNames.add(ruleName) in addPromoDiscount()
+→ Next evaluation: isRuleAlreadyFired() returns true
+→ WHEN condition fails → rule does NOT fire again
+→ Infinite loop permanently impossible
+```
+
+### Why `salience` (Priority)
+
+```
+Drools fires rules in salience order (highest first)
+Promotions priority 1 → salience 100 (fires first)
+Promotions priority 5 → salience 20  (fires last)
+System discounts have direct salience value (80, 90 etc.)
+
+WHY ORDER MATTERS:
+  Non-stackable promo sets promoStackLocked = true
+  If it fires FIRST → all lower-priority promos blocked
+  If it fires LAST  → other promos already applied
+  Admin controls this via priority field
+```
+
+### `update($result)` — Why Needed
+
+```
+Drools working memory is read at start of each rule evaluation
+If DiscountResult changes (new discount added, lock set)
+other rules need to see the updated state
+
+update($result) tells Drools:
+"DiscountResult has changed — re-evaluate rules that pattern-match it"
+
+This enables:
+  Non-stackable promo fires → sets promoStackLocked=true → update()
+  Other promo rules re-evaluate → see promoStackLocked=true → skip
+```
+
+---
+
+## 9. REST API Layer
+
+### Promotion Controller
+
+```
+POST   /api/promotions?createdBy=ADMIN         → Create promotion
+PUT    /api/promotions/{id}?updatedBy=ADMIN     → Update promotion
+GET    /api/promotions                          → Get all promotions
+GET    /api/promotions/{id}                     → Get by ID
+GET    /api/promotions/status/{status}          → Filter by status
+```
+
+### System Discount Controller
+
+```
+POST   /api/system-discounts?createdBy=ADMIN    → Create system discount
+PUT    /api/system-discounts/{id}?updatedBy=ADMIN→ Update system discount
+GET    /api/system-discounts                    → Get all
+GET    /api/system-discounts/{id}               → Get by ID
+GET    /api/system-discounts/status/{status}    → Filter by status
+```
+
+### Rule Engine Controller
+
+```
+POST   /api/engine/apply                        → Apply discounts to cart
+GET    /api/engine/rules                        → List all active rules
+POST   /api/engine/reload                       → Force reload KieContainer
+GET    /api/engine/audit/{customerId}           → Get audit logs for customer
+POST   /api/engine/rules/{name}/rollback/{ver}  → Rollback rule to version
+GET    /api/engine/rules/{name}/history         → Get rule version history
+```
+
+### Engine Config Controller
+
+```
+GET    /api/config                              → Get all config
+GET    /api/config/{key}                        → Get config by key
+PUT    /api/config/{key}?value=3&updatedBy=ADMIN→ Update config value
+```
+
+---
+
+## 10. Promotion Features
+
+### Redemption Methods
+
+```
+PROMO_CODE:
+  Customer enters code at checkout
+  DRL WHEN checks: hasPromoCode("SAVE10") == true
+  Validation: code exists, active, not expired, within limits
+
+AUTOMATIC:
+  No code needed — rule fires automatically
+  DRL WHEN checks: cartTotal > 0 (and other conditions)
+  Used for auto-applied promotional discounts
+```
+
+### Discount Scope
+
+```
+applyFullCart = true:
+  Discount applied to total cart value
+  ticket tables (titles/quantities/applyAll) are EMPTY
+  DRL uses: $cart.getCartTotal()
+
+applyFullCart = false + category set:
+  Discount applied to items in that category only
+  DRL uses: $cart.getCategoryTotal("Museum Admission")
+
+applyFullCart = false + ticketTitles set:
+  Ticket-level discount — most granular
+  ticket tables populated in DB
+  DRL uses per-title logic:
+    applyAll=true  → $cart.getTicketTitleTotal("Adult")
+    applyAll=false → $cart.getTicketTitleTotalForQty("Adult", 2)
+```
+
+### Stackable Logic
+
+```
+stackable = true:
+  Can combine with other stackable promos
+  promoStackLocked stays false
+  Multiple stackable promos can all apply
+
+stackable = false:
+  Cannot combine with ANY other promo
+  WHEN block checks: promoStackLocked == false
+  THEN block sets: $result.setPromoStackLocked(true)
+  update($result) → other promo rules re-evaluate
+  → they see promoStackLocked=true → they skip
+
+Validation (before Drools):
+  If 2+ promos selected AND any is non-stackable → 400 error
+  "Promo [FLAT30] is not stackable. Please select it alone."
+```
+
+### Usage Limits
+
+```
+usageLimit (global):
+  Total times this promo can be used by ALL customers
+  Checked before fireAllRules() via DB query
+  SUM(usage_count) WHERE promo_code = ?
+
+maxUsagePerCustomer:
+  Max times ONE customer can use this promo
+  Checked per customer via promo_usage table
+  After apply: incrementUsage() increments count
+```
+
+---
+
+## 11. System Discount Features
+
+### Auto-Application
+
+```
+System discounts fire automatically — no customer action
+Drools applies them based on:
+  userType match  (MEMBER, NON_MEMBER, ALL_USERS)
+  date window     (startDate/endDate)
+  nonStackableLocked state
+  stackGroup not already fired
+```
+
+### Manager Approval
+
+```
+managerApprovalRequired = true:
+  Discount applies normally in calculation
+  Response has: "managerApprovalRequired": true
+  POS system shows alert to operator
+  Manager must physically approve before completing transaction
+  Used for large exclusive discounts (e.g. 20% seasonal sale)
+```
+
+### Stack Groups
+
+```
+stackGroup = "EXCLUSIVE_SALE_GROUP":
+  Only ONE discount from this group can apply per cart
+  DRL WHEN checks: isStackGroupAlreadyFired("EXCLUSIVE_SALE_GROUP") == false
+  DRL THEN calls: $result.markStackGroupFired("EXCLUSIVE_SALE_GROUP")
+  → Other discounts in same group see group already fired → skip
+
+WHY:
+  Prevent two exclusive sale discounts stacking
+  e.g. Summer Sale + Winter Sale should not both apply
+```
+
+### Non-Stackable System Discounts
+
+```
+stackable = false:
+  Sets nonStackableLocked = true after firing
+  Other system discounts check: nonStackableLocked == false
+  → They skip if locked
+
+Different from promoStackLocked:
+  promoStackLocked   → controls PROMOTION stacking
+  nonStackableLocked → controls SYSTEM DISCOUNT stacking
+  These are independent — a non-stackable system discount
+  does not block promotions from applying
+```
+
+---
+
+## 12. Rule Engine Apply Flow
+
+### Complete Flow Diagram
+
+```
+POST /api/engine/apply
+         │
+         ▼
+1. cart.setCurrentDateTime(now)
+         │
+         ▼
+2. validatePromoCodes() [if promoCodes not empty]
+   │
+   ├── getMaxPromosPerCart()    ← from CACHE (no DB)
+   ├── duplicate check
+   ├── findByPromoCodeInAndActiveTrue()  ← 1 DB call (batch)
+   ├── stackable check (if >1 promo selected)
+   ├── findByPromoCodeInAndCustomerId()  ← 1 DB call (batch)
+   ├── getTotalUsageByPromoCodeIn()      ← 1 DB call (batch)
+   └── validateDateAndUsage() per promo  ← uses pre-fetched maps
+         │
+         ▼
+3. fireRules()
+   │
+   ├── get KieContainer (AtomicReference, no lock needed for read)
+   ├── new DiscountResult() with promoStackLocked=false
+   ├── kieSession = container.newKieSession()
+   ├── kieSession.insert(cart)
+   ├── kieSession.insert(result)
+   ├── kieSession.fireAllRules()
+   │     │
+   │     ├── Rules fire in salience order
+   │     ├── Each rule checks: promoStackLocked, isRuleAlreadyFired
+   │     ├── Matching rules execute their THEN block
+   │     ├── Discounts accumulated in DiscountResult
+   │     └── update($result) after each rule
+   ├── result.computeFinalTotal()
+   └── kieSession.dispose()  ← ALWAYS in finally
+         │
+         ▼
+4. incrementUsage() per applied promo
+   │
+   └── UPDATE promo_usage + 1 (or INSERT if first use)
+         │
+         ▼
+5. saveAuditLogAsync()  ← @Async — does NOT block response
+   │
+   └── Save to discount_audit_log in background thread
+         │
+         ▼
+6. Return DiscountResult to client
+```
+
+### DiscountResult Object
+
+```
+{
+  originalTotal:           total before any discounts
+  totalDiscount:           sum of all applied discounts
+  finalTotal:              originalTotal - totalDiscount (min 0)
+  managerApprovalRequired: true if any sys discount needs it
+  promoStackLocked:        true if a non-stackable promo applied
+  nonStackableLocked:      true if a non-stackable sys discount applied
+  firedRuleNames:          Set of rule names that fired (internal)
+  appliedDiscounts: [
+    {
+      ruleName:               identifies which rule
+      displayMessage:         customer-facing text
+      description:            system discount description
+      icon:                   UI icon reference
+      discountAmount:         amount discounted
+      discountType:           PROMOTION or SYSTEM_DISCOUNT
+      stackable:              was this discount stackable
+      managerApprovalRequired:needs manager sign-off
+    }
+  ]
+}
+```
+
+---
+
+## 13. Configuration Engine
+
+### Purpose
+
+```
+engine_config table stores key-value settings
+that control engine behavior WITHOUT code changes
+```
+
+### Available Config Keys
+
+```
+┌──────────────────────┬────────────────────────────────────────┐
+│ Key                  │ Purpose                                │
+├──────────────────────┼────────────────────────────────────────┤
+│ MAX_PROMOS_PER_CART  │ Max promo codes customer can select    │
+│                      │ Default: 2                             │
+│                      │ Checked before any validation          │
+└──────────────────────┴────────────────────────────────────────┘
+```
+
+### In-Memory Cache
+
+```
+WHY: Config is read on EVERY apply request
+     DB hit on every request = wasteful (config rarely changes)
+
+HOW:
+  ConcurrentHashMap<String, String> configCache
+  First request → DB hit → populate cache
+  All subsequent requests → cache hit (zero DB)
+  Admin updates config → updateConfig() → cache refreshed
+  Thread-safe: ConcurrentHashMap handles concurrent reads/writes
+```
+
+---
+
+## 14. Rule Versioning & Rollback
+
+### How Versioning Works
+
+```
+Every rule change creates a history record:
+
+Action         | What happens
+───────────────┬──────────────────────────────────────
+CREATED        │ First time rule generated (version 1)
+UPDATED        │ Promo/discount changed (version N+1)
+DEACTIVATED    │ Status set to INACTIVE
+ROLLBACK_TO_V2 │ Rolled back to version 2 (new version created)
+
+rule_history stores EVERY version's DRL content
+This means you can always restore any past state
+```
+
+### Rollback Process
+
+```
+POST /api/engine/rules/PROMO_MUSEUM20/rollback/1
+
+1. Find history record for PROMO_MUSEUM20 version 1
+2. Find current active rule for PROMO_MUSEUM20
+3. Save current version to history as "ROLLED_BACK"
+4. Set current rule's drlContent = history version 1's DRL
+5. Increment version number
+6. Save history entry with action "ROLLBACK_TO_V1"
+7. reloadRules() → new KieContainer with restored DRL
+```
+
+---
+
+## 15. Audit Logging
+
+### What Is Logged
+
+```
+Every call to POST /api/engine/apply creates a record in
+discount_audit_log with:
+
+  customerId          → who made the request
+  promoCodes          → comma-separated codes submitted
+  originalTotal       → cart total before discount
+  totalDiscount       → total amount discounted
+  finalTotal          → amount customer pays
+  managerApproval     → was approval needed
+  rulesFired          → count of discounts applied
+  appliedDiscountsJson→ full JSON of all applied discounts
+  appliedAt           → timestamp
+```
+
+### Why @Async
+
+```
+Saving audit log should NOT delay the customer's response
+The customer gets their discount result immediately
+Audit log is saved in a background thread (@Async)
+
+If audit save fails: logged as ERROR, response unaffected
+Customer never sees audit log save failures
+```
+
+---
+
+## 16. Error Handling
+
+### GlobalExceptionHandler
+
+```
+All exceptions caught by @RestControllerAdvice
+Returns consistent error format:
+{
+  "status"   : 400,
+  "error"    : "human readable message",
+  "timestamp": "2026-03-24T10:00:00"
+}
+```
+
+### Validation Errors (400)
+
+```
+Error                              │ Trigger
+───────────────────────────────────┼────────────────────────────────
+Promo code already exists          │ duplicate promoCode on create
+Max promos exceeded                │ promoCodes.size() > MAX_CONFIG
+Duplicate promo codes              │ ["SAVE10","SAVE10"] in request
+Promo not found or inactive        │ promoCode not in DB or active=false
+Promo not stackable                │ non-stackable + another promo
+Promo not yet active               │ now < startDate
+Promo expired                      │ now > endDate
+Global usage limit reached         │ total usage >= usageLimit
+Per customer limit reached         │ customer usage >= maxPerCustomer
+Promotion not found                │ GET /promotions/999 not in DB
+Version not found for rollback     │ rollback to non-existent version
+Config key not found               │ GET /config/UNKNOWN_KEY
+```
+
+---
+
+## 17. Performance Optimizations
+
+### Batch DB Queries
+
+```
+BEFORE: N promo codes = N separate DB calls (sequential)
+AFTER:  N promo codes = 1 batch DB call (IN clause)
+
+findByPromoCodeInAndActiveTrue(List<String>)
+→ SELECT * FROM promotion WHERE promo_code IN (?,?) AND active=true
+
+findByPromoCodeInAndCustomerId(List<String>, String)
+→ SELECT * FROM promo_usage WHERE promo_code IN (?,?) AND customer_id=?
+
+getTotalUsageByPromoCodeIn(List<String>)
+→ SELECT promo_code, SUM(usage_count) FROM promo_usage
+  WHERE promo_code IN (?,?) GROUP BY promo_code
+```
+
+### Config Cache
+
+```
+BEFORE: DB hit on every apply request for MAX_PROMOS_PER_CART
+AFTER:  In-memory ConcurrentHashMap cache
+        DB hit only once (first request) + on admin update
+```
+
+### ReadWriteLock for Rule Reload
+
+```
+BEFORE: synchronized reloadRules()
+        ALL concurrent apply requests blocked during reload
+
+AFTER:  ReadWriteLock
+        Read lock:  many apply requests run CONCURRENTLY
+        Write lock: only reloadRules() takes it (brief)
+        Apply requests never blocked by each other
+```
+
+### @Async Audit Log
+
+```
+Audit log save happens in background thread
+Customer gets response IMMEDIATELY after fireAllRules()
+No waiting for DB write of audit data
+```
+
+### KieContainer as Singleton
+
+```
+KieContainer is expensive to build (DRL compilation)
+Built ONCE and held as AtomicReference
+Replaced atomically only when rules change
+All apply requests share the same KieContainer
+Old container disposed safely after active sessions drain
+```
+
+---
+
+## 18. Known Issues Fixed
+
+```
+┌────┬──────────────────────────────────┬──────────────────────────────────────┐
+│ #  │ Issue                            │ Fix Applied                          │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 1  │ Circular dependency between      │ ApplicationContext.getBean() lazy    │
+│    │ DroolsEngineService and          │ lookup in DroolsRuleService          │
+│    │ DroolsRuleService                │                                      │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 2  │ OOM: Drools infinite loop        │ isRuleAlreadyFired() check in WHEN   │
+│    │ update($result) re-triggers rule │ + firedRuleNames guard in            │
+│    │ → heap exhausted                 │ addPromoDiscount()                   │
+├────┼────���─────────────────────────────┼──────────────────────────────────────┤
+│ 3  │ LocalDateTime parse error in DRL │ Use LocalDateTime.of(y,m,d,h,min,s) │
+│    │ ISO string parse fails in Drools │ instead of parse() in DRL            │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 4  │ Jackson config startup failure   │ Use Jackson2ObjectMapperBuilder      │
+│    │ Two @Primary beans conflicting   │ Customizer — no competing bean       │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 5  │ Spring Boot 4.x wrong Jackson    │ tools.jackson imports                │
+│    │ imports (com.fasterxml)          │ JsonMapper.builder().configure()     │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 6  │ ticket tables empty              │ Only skip ticket fields when         │
+│    │ @ElementCollection not saving    │ applyFullCart=true                   │
+│    │                                  │ Null-safe copy in mapRequestToEntity │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 7  │ /apply slow (N+1 DB calls)       │ Batch queries + config cache         │
+│    │ 10+ DB calls for 2 promos        │ Reduced to 3-5 DB calls total        │
+├────┼──────────────────────────────────┼──────────────────────────────────────┤
+│ 8  │ KieContainer null on startup     │ buildEmptyContainer() fallback       │
+│    │ if no rules in DB                │ @PostConstruct wrapped in try/catch  │
+└────┴──────────────────────────────────┴──────────────────────────────────────┘
+```
+
+---
+
+## 19. Request & Response Reference
+
+### Create Stackable Promotion (Ticket Level)
+
+```json
+POST /api/promotions?createdBy=ADMIN
+
+Request:
+{
+  "redemptionMethod"       : "PROMO_CODE",
+  "promotionType"          : "PERCENTAGE",
+  "promoCode"              : "MUSEUM20",
+  "displayMessage"         : "20% off Museum tickets!",
+  "discountType"           : "PERCENTAGE",
+  "amount"                 : 20.0,
+  "stackable"              : true,
+  "priority"               : 3,
+  "applyFullCart"          : false,
+  "category"               : "Museum Admission",
+  "ticketType"             : "General Admission",
+  "ticketTitles"           : ["Adult","Youth","Child"],
+  "ticketQuantities"       : {"Adult":2,"Youth":0,"Child":0},
+  "applyAllPerTicketTitle" : {"Adult":false,"Youth":true,"Child":false},
+  "startDate"              : "2026-01-01T00:00:00",
+  "endDate"                : "2026-12-31T23:59:59",
+  "channelWeb"             : true,
+  "channelPos"             : true,
+  "userType"               : "ALL_USERS",
+  "usageLimit"             : 100,
+  "maxUsagePerCustomer"    : 2,
+  "status"                 : "PUBLISHED"
+}
+
+Response 200:
+{
+  "id"            : 1,
+  "promoCode"     : "MUSEUM20",
+  "status"        : "PUBLISHED",
+  "active"        : true,
+  "createdBy"     : "ADMIN",
+  "createdAt"     : "2026-03-24T10:00:00"
+}
+```
+
+### Apply Cart Request
+
+```json
+POST /api/engine/apply
+
+Request:
+{
+  "customerId" : "CUST-001",
+  "promoCodes" : ["SAVE10","MUSEUM20"],
+  "userType"   : "MEMBER",
+  "channel"    : "WEB",
+  "items"      : [
+    {
+      "productId"  : "T001",
+      "productName": "Adult Ticket",
+      "category"   : "Museum Admission",
+      "ticketType" : "General Admission",
+      "ticketTitle": "Adult",
+      "quantity"   : 2,
+      "unitPrice"  : 29.99
+    }
+  ]
+}
+
+Response 200:
+{
+  "originalTotal"          : 59.98,
+  "totalDiscount"          : 17.99,
+  "finalTotal"             : 41.99,
+  "managerApprovalRequired": false,
+  "promoStackLocked"       : false,
+  "nonStackableLocked"     : false,
+  "appliedDiscounts"       : [
+    {
+      "ruleName"      : "PROMO_SAVE10",
+      "displayMessage": "10% off your entire cart!",
+      "discountAmount": 6.00,
+      "discountType"  : "PROMOTION",
+      "stackable"     : true
+    },
+    {
+      "ruleName"      : "PROMO_MUSEUM20",
+      "displayMessage": "20% off Museum tickets!",
+      "discountAmount": 11.99,
+      "discountType"  : "PROMOTION",
+      "stackable"     : true
+    }
+  ]
+}
+```
+
+---
+
+## Appendix — Glossary
+
+```
+┌──────────────────────┬────────────────────────────────────────────────┐
+│ Term                 │ Meaning                                        │
+├──────────────────────┼────────────────────────────────────────────────┤
+│ DRL                  │ Drools Rule Language — rule definition syntax  │
+│ KieContainer         │ Compiled rule container (singleton per app)    │
+│ KieSession           │ Rule execution context (new per request)       │
+│ salience             │ Drools rule priority — higher fires first      │
+│ no-loop              │ Prevents rule re-activating itself             │
+│ isRuleAlreadyFired   │ Custom guard — prevents any re-activation      │
+│ update($result)      │ Notifies Drools that object changed            │
+│ promoStackLocked     │ Blocks other promos after non-stackable fires  │
+│ nonStackableLocked   │ Blocks sys discounts after exclusive one fires │
+│ stackGroup           │ Only one discount per group can apply          │
+│ @ElementCollection   │ JPA for storing collections in child tables    │
+│ AtomicReference      │ Thread-safe reference swap for KieContainer    │
+│ ReadWriteLock        │ Concurrent reads + exclusive writes for reload │
+│ @Async               │ Spring background thread execution             │
+│ configCache          │ In-memory ConcurrentHashMap for engine config  │
+└──────────────────────┴────────────────────────────────────────────────┘
+```
