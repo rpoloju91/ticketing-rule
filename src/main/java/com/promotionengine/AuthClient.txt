@@ -1,0 +1,27 @@
+@Service
+public class AuthClient {
+
+    private final WebClient webClient;
+
+    @Value("${auth-service.base-url}")
+    private String authServiceBaseUrl;
+
+    public AuthClient(WebClient webClient) {
+        this.webClient = webClient;
+    }
+
+    public String createSession() {
+
+        TicketRequest request = new TicketRequest();
+        request.setType("SYSTEMAPICALL");
+
+        return webClient
+                .post()
+                .uri(authServiceBaseUrl + "/api/v1/auth/session")
+                .bodyValue(request)
+                .retrieve()
+                .bodyToMono(ApiResponse.class)
+                .map(response -> (String) response.getData())
+                .block();
+    }
+}
