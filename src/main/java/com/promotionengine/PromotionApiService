@@ -1,0 +1,28 @@
+//HLT promotion service
+@Service
+@RequiredArgsConstructor
+public class PromotionApiService {
+
+    private final PromotionDao promotionDao;
+
+    public Map<String, Object> getByCode(
+            String sessionKey, String promoCode) {
+
+        // Validate the session according to hlt-api's
+        // existing authentication mechanism.
+
+        return promotionDao.getPromotionByCode(
+                sessionKey, promoCode);
+    }
+
+    @Transactional
+    public Map<String, Object> create(
+            String sessionKey,
+            CreatePromotionRequest request) {
+
+        // Validate the session and authorization here,
+        // following the existing hlt-api implementation.
+
+        return promotionDao.createPromotion(request);
+    }
+}
