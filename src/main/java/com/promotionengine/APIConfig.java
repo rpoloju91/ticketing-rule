@@ -20,6 +20,7 @@ import java.time.Duration;
 @Slf4j
 public class HltApiConfig {
 
+Temporary exception for DEV environment to support ECS service-to-service communication with hlt-api while the permanent SSL certificate/trust configuration is being finalized. This configuration is not intended for production and will be removed once the ECS service-to-service SSL solution is implemented.    
     @Bean
     public RestClient hltRestClient(
             @Value("${hlt-api.base-url}") String baseUrl,
